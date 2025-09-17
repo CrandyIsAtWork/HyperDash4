@@ -1,0 +1,163 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Strat Combat (Prototype)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Roboto, "Segoe UI", Arial; margin: 12px; }
+    #grid { display: grid; grid-template-columns: repeat(6, 48px); gap: 4px; margin-top: 10px; }
+    .cell { width: 48px; height: 48px; border: 1px solid #bbb; display:flex; align-items:center; justify-content:center; font-size:12px; cursor:pointer; background:white; }
+    .unit { width: 36px; height: 36px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-weight:bold; }
+    .controls { margin-top:10px; }
+    #log { margin-top:10px; height:120px; overflow:auto; border:1px solid #eee; padding:6px; background:#fafafa; font-size:12px;}
+    button { padding:6px 10px; margin-right:6px; }
+    .you { outline:2px solid black; }
+  </style>
+</head>
+<body>
+  <h1>Strat Combat Prototype</h1>
+  <div>
+    Name: <input id="name" value="Player" />
+    <button id="create">Create Lobby</button>
+    <select id="lobbies"></select>
+    <button id="join">Join Lobby</button>
+    <button id="refresh">Refresh Lobbies</button>
+  </div>
+
+  <div id="matchArea" style="display:none;">
+    <div>Match: <span id="matchId"></span> — You: <span id="youName"></span> — Turn: <span id="turnInfo"></span></div>
+    <div id="grid"></div>
+    <div class="controls">
+      <button id="moveBtn">Move</button>
+      <button id="attackBtn">Attack</button>
+      <button id="endBtn">End Turn</button>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const ws = new WebSocket("wss://fb306d46-d95a-496b-9881-5bd953daeb1e-00-3on3fdjrlb0.riker.replit.dev");
+    const nameInput = document.getElementById('name');
+    const createBtn = document.getElementById('create');
+    const joinBtn = document.getElementById('join');
+    const lobbiesSelect = document.getElementById('lobbies');
+    const refreshBtn = document.getElementById('refresh');
+    const matchArea = document.getElementById('matchArea');
+    const matchIdSpan = document.getElementById('matchId');
+    const youNameSpan = document.getElementById('youName');
+    const turnInfo = document.getElementById('turnInfo');
+    const gridEl = document.getElementById('grid');
+    const logEl = document.getElementById('log');
+
+    let myPlayerIndex = null;
+    let myPlayerId = null; // assigned by server via WS metadata not exposed; we'll track via match state
+    let currentState = null;
+    let selectedUnitId = null;
+    let currentAction = null; // "move" or "attack"
+
+    function addLog(txt){ const d = document.createElement('div'); d.textContent = txt; logEl.prepend(d); }
+
+    ws.addEventListener('open', ()=> {
+      ws.send(JSON.stringify({type:'list_lobbies'}));
+    });
+
+    ws.addEventListener('message', ev => {
+      const msg = JSON.parse(ev.data);
+      if(msg.type === 'lobbies'){
+        lobbiesSelect.innerHTML = '';
+        msg.lobbies.forEach(l => {
+          const opt = document.createElement('option');
+          opt.value = l.id; opt.textContent = `${l.id} (${l.players.join(',')})`;
+          lobbiesSelect.appendChild(opt);
+        });
+      } else if(msg.type === 'lobby_created'){
+        addLog('Lobby created: ' + msg.lobbyId);
+        ws.send(JSON.stringify({type:'list_lobbies'}));
+      } else if(msg.type === 'lobby_update'){
+        addLog('Lobby updated: ' + msg.lobbyId + ' players: ' + msg.players.join(','));
+      } else if(msg.type === 'match_start'){
+        addLog('Match starting!');
+        myPlayerIndex = msg.playerIndex;
+        currentState = msg.state;
+        showMatch(msg.state);
+      } else if(msg.type === 'state'){
+        currentState = msg.state;
+        showMatch(msg.state);
+      } else if(msg.type === 'error'){
+        addLog('Error: ' + msg.msg);
+      }
+    });
+
+    createBtn.onclick = () => {
+      ws.send(JSON.stringify({ type:'create_lobby', name: nameInput.value }));
+    };
+    joinBtn.onclick = () => {
+      const id = lobbiesSelect.value;
+      if(!id){ addLog('Pick a lobby'); return; }
+      ws.send(JSON.stringify({ type:'join_lobby', lobbyId: id, name: nameInput.value }));
+    };
+    refreshBtn.onclick = () => ws.send(JSON.stringify({type:'list_lobbies'}));
+
+    function showMatch(state){
+      matchArea.style.display = 'block';
+      matchIdSpan.textContent = state.id;
+      youNameSpan.textContent = state.players[myPlayerIndex].name || 'You';
+      turnInfo.textContent = `Turn: ${state.players[state.turn].name}`;
+      // draw grid
+      gridEl.innerHTML = '';
+      const W = state.width, H = state.height;
+      for(let y=0;y<H;y++){
+        for(let x=0;x<W;x++){
+          const cell = document.createElement('div');
+          cell.className = 'cell';
+          cell.dataset.x = x; cell.dataset.y = y;
+          const unit = state.units.find(u => u.x===x && u.y===y && u.hp>0);
+          if(unit){
+            const udiv = document.createElement('div');
+            udiv.className = 'unit';
+            udiv.textContent = unit.hp;
+            // style by owner index
+            const ownerIndex = state.players.findIndex(p=>p.id===unit.owner);
+            udiv.style.background = ownerIndex===0 ? '#e0f7ff' : '#ffe0e0';
+            if(ownerIndex === myPlayerIndex) udiv.classList.add('you');
+            cell.appendChild(udiv);
+            cell.title = `${state.players[ownerIndex].name} unit (hp ${unit.hp}) id:${unit.id}`;
+          }
+          cell.onclick = onCellClick;
+          gridEl.appendChild(cell);
+        }
+      }
+    }
+
+    function onCellClick(e){
+      const x = parseInt(e.currentTarget.dataset.x);
+      const y = parseInt(e.currentTarget.dataset.y);
+      if(!currentState) return;
+      // select unit under you when clicking your unit
+      const unit = currentState.units.find(u=>u.x===x && u.y===y && u.hp>0);
+      if(unit && currentState.players.findIndex(p=>p.id===unit.owner) === myPlayerIndex){
+        selectedUnitId = unit.id;
+        addLog('Selected your unit (hp '+unit.hp+')');
+        return;
+      }
+      // if an action is chosen
+      if(selectedUnitId && currentAction){
+        sendAction({ act: currentAction, unitId: selectedUnitId, to: { x, y } });
+        // clear selection and action
+        currentAction = null;
+        selectedUnitId = null;
+      }
+    }
+
+    function sendAction(action){
+      ws.send(JSON.stringify({ type:'action', matchId: currentState.id, action }));
+    }
+
+    document.getElementById('moveBtn').onclick = () => { currentAction = 'move'; addLog('Click a destination to move selected unit'); };
+    document.getElementById('attackBtn').onclick = () => { currentAction = 'attack'; addLog('Click a tile with an enemy unit to attack'); };
+    document.getElementById('endBtn').onclick = () => { sendAction({ act:'end' }); };
+
+  </script>
+</body>
+</html>
