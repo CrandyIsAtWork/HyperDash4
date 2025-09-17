@@ -162,10 +162,17 @@ ws.addEventListener('message', ev => {
       opt.textContent = `${l.id} (${l.players.join(',')})`; sel.appendChild(opt);
     });
   } else if(msg.type === 'lobby_created'){
-    addLog('Lobby created: ' + msg.lobbyId);
-    ws.send(JSON.stringify({ type:'list_lobbies' }));
-  } else if(msg.type === 'lobby_update'){
-    addLog('Lobby updated: ' + msg.lobbyId + ' players: ' + msg.players.join(','));
+  addLog('Lobby created: ' + msg.lobbyId);
+  ws.send(JSON.stringify({ type:'list_lobbies' }));
+
+  // send chosen troops/items
+  ws.send(JSON.stringify({
+    type: 'setLoadout',
+    lobbyId: msg.lobbyId,
+    troops: TROOPS.filter(t => t.purchased).map(t => t.id),
+    items: ITEMS.filter(i => i.purchased).map(i => i.id)
+  }));
+}
   } else if(msg.type === 'match_start'){
     addLog('Match starting!');
     myPlayerIndex = msg.playerIndex;
