@@ -1,162 +1,327 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Strat Combat (Prototype)</title>
+  <title>Hyper Dash 4</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body { font-family: system-ui, -apple-system, Roboto, "Segoe UI", Arial; margin: 12px; }
-    #grid { display: grid; grid-template-columns: repeat(6, 48px); gap: 4px; margin-top: 10px; }
-    .cell { width: 48px; height: 48px; border: 1px solid #bbb; display:flex; align-items:center; justify-content:center; font-size:12px; cursor:pointer; background:white; }
-    .unit { width: 36px; height: 36px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-weight:bold; }
-    .controls { margin-top:10px; }
-    #log { margin-top:10px; height:120px; overflow:auto; border:1px solid #eee; padding:6px; background:#fafafa; font-size:12px;}
-    button { padding:6px 10px; margin-right:6px; }
-    .you { outline:2px solid black; }
-  </style>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <h1>Strat Combat Prototype</h1>
-  <div>
-    Name: <input id="name" value="Player" />
-    <button id="create">Create Lobby</button>
-    <select id="lobbies"></select>
-    <button id="join">Join Lobby</button>
-    <button id="refresh">Refresh Lobbies</button>
-  </div>
-
-  <div id="matchArea" style="display:none;">
-    <div>Match: <span id="matchId"></span> — You: <span id="youName"></span> — Turn: <span id="turnInfo"></span></div>
-    <div id="grid"></div>
-    <div class="controls">
-      <button id="moveBtn">Move</button>
-      <button id="attackBtn">Attack</button>
-      <button id="endBtn">End Turn</button>
+  <header class="site-header">
+    <div class="logo-wrap">
+      <img src="./images/logo.png" alt="Hyper Dash 4 logo" class="logo" />
+      <h1>Hyper Dash 4</h1>
     </div>
-    <div id="log"></div>
-  </div>
+    <div class="meta">
+      <div>Player: <input id="name" value="Player" /></div>
+      <div>Coins: <span id="coins">0</span></div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="lobby">
+      <div>
+        <button id="create">Create Lobby</button>
+        <select id="lobbies"></select>
+        <button id="join">Join Lobby</button>
+        <button id="refresh">Refresh Lobbies</button>
+      </div>
+    </section>
+
+    <section id="matchArea" class="match" style="display:none;">
+      <div class="match-top">
+        <div>Match: <span id="matchId"></span></div>
+        <div>You: <span id="youName"></span></div>
+        <div>Turn: <span id="turnInfo"></span></div>
+        <div>Sub-Turn: <span id="subTurnInfo">1</span></div>
+      </div>
+
+      <div class="game-grid-shop">
+        <div class="grid-wrap">
+          <div id="grid" class="grid"></div>
+        </div>
+
+        <aside class="shop">
+          <h2>Shop</h2>
+          <div id="troopsList" class="shop-section">
+            <!-- populated by JS -->
+          </div>
+
+          <h3>Items</h3>
+          <div id="itemsList" class="shop-section">
+            <!-- populated by JS -->
+          </div>
+
+          <div class="shop-actions">
+            <button id="deployBtn" title="Deploy selected purchased unit">Deploy Selected</button>
+            <button id="useItemBtn" title="Use selected item on tile">Use Item</button>
+          </div>
+        </aside>
+      </div>
+
+      <div class="controls">
+        <button id="moveBtn">Move</button>
+        <button id="attackBtn">Attack</button>
+        <button id="endBtn">End Turn</button>
+      </div>
+
+      <div id="log" class="log"></div>
+    </section>
+  </main>
 
   <script>
-    const ws = new WebSocket("wss://fb306d46-d95a-496b-9881-5bd953daeb1e-00-3on3fdjrlb0.riker.replit.dev");
-    const nameInput = document.getElementById('name');
-    const createBtn = document.getElementById('create');
-    const joinBtn = document.getElementById('join');
-    const lobbiesSelect = document.getElementById('lobbies');
-    const refreshBtn = document.getElementById('refresh');
-    const matchArea = document.getElementById('matchArea');
-    const matchIdSpan = document.getElementById('matchId');
-    const youNameSpan = document.getElementById('youName');
-    const turnInfo = document.getElementById('turnInfo');
-    const gridEl = document.getElementById('grid');
-    const logEl = document.getElementById('log');
+/* ================= CONFIG ================= */
+const WS_URL = "wss://fb306d46-d95a-496b-9881-5bd953daeb1e-00-3on3fdjrlb0.riker.replit.dev"; // <-- replace if needed
+const GRID_W = 6, GRID_H = 6;
 
-    let myPlayerIndex = null;
-    let myPlayerId = null; // assigned by server via WS metadata not exposed; we'll track via match state
-    let currentState = null;
-    let selectedUnitId = null;
-    let currentAction = null; // "move" or "attack"
+/* ================ STATE ================ */
+const ws = new WebSocket(WS_URL);
+let myPlayerIndex = null;
+let currentState = null;
+let selectedUnitId = null;
+let selectedShopItem = null;   // {type:'troop'|'item', id}
+let currentAction = null; // "move" or "attack"
+let subTurn = 1; // 1 or 2
+let coins = 5; // starting coins locally
+const logEl = document.getElementById('log');
 
-    function addLog(txt){ const d = document.createElement('div'); d.textContent = txt; logEl.prepend(d); }
+/* ================ TROOPS & ITEMS ================ */
+const TROOPS = [
+  { id: 'bruiser', name: 'Bruiser', cost: 3, hp: 14, move:2, range:1, damage:4, desc: 'Tanky melee. Pros: survives hits. Cons: slow.' },
+  { id: 'striker', name: 'Striker', cost: 4, hp: 8, move:3, range:1, damage:5, desc: 'High damage, fragile.' },
+  { id: 'ranger', name: 'Ranger', cost: 4, hp: 7, move:2, range:2, damage:3, desc: 'Ranged attacker with 2-tile range.' },
+];
 
-    ws.addEventListener('open', ()=> {
-      ws.send(JSON.stringify({type:'list_lobbies'}));
+const ITEMS = [
+  { id: 'medkit', name: 'Medkit', cost: 2, desc: 'Heals 5 HP to one unit on use', effect: { kind: 'heal', amount: 5 } },
+  { id: 'bomb', name: 'Bomb', cost: 3, desc: 'Deals 4 damage to a tile (AOE 0)', effect: { kind: 'damage', amount: 4 } },
+];
+
+/* ================ UI Helpers ================ */
+function addLog(txt){ const d = document.createElement('div'); d.textContent = `${new Date().toLocaleTimeString()} — ${txt}`; logEl.prepend(d); }
+function setCoins(n){ coins = n; document.getElementById('coins').textContent = coins; }
+setCoins(coins);
+
+/* ================ SHOP UI ================ */
+function renderShop(){
+  const troopsArea = document.getElementById('troopsList');
+  troopsArea.innerHTML = '';
+  TROOPS.forEach(t => {
+    const node = document.createElement('div');
+    node.className = 'shop-item';
+    node.innerHTML = `<strong>${t.name}</strong> — ${t.cost} ⨯<div class="small">${t.desc}</div>`;
+    const btn = document.createElement('button');
+    btn.textContent = 'Buy';
+    btn.onclick = () => buyTroop(t);
+    node.appendChild(btn);
+    troopsArea.appendChild(node);
+  });
+
+  const itemsArea = document.getElementById('itemsList');
+  itemsArea.innerHTML = '';
+  ITEMS.forEach(it => {
+    const node = document.createElement('div');
+    node.className = 'shop-item';
+    node.innerHTML = `<strong>${it.name}</strong> — ${it.cost} ⨯<div class="small">${it.desc}</div>`;
+    const btn = document.createElement('button');
+    btn.textContent = 'Buy';
+    btn.onclick = () => buyItem(it);
+    node.appendChild(btn);
+    itemsArea.appendChild(node);
+  });
+}
+renderShop();
+
+function buyTroop(t){
+  if(coins < t.cost){ addLog('Not enough coins'); return; }
+  // For now we handle purchases locally; send request to server to persist.
+  setCoins(coins - t.cost);
+  addLog(`Bought ${t.name}. Click Deploy Selected to place it on your side.`);
+  selectedShopItem = { type: 'troop', data: t };
+  // send purchase request to server (server must implement to persist)
+  ws.send(JSON.stringify({ type: 'purchase_request', itemType: 'troop', itemId: t.id }));
+}
+
+function buyItem(it){
+  if(coins < it.cost){ addLog('Not enough coins'); return; }
+  setCoins(coins - it.cost);
+  addLog(`Bought item ${it.name}. Select Use Item and click a tile to use.`);
+  selectedShopItem = { type: 'item', data: it };
+  ws.send(JSON.stringify({ type: 'purchase_request', itemType: 'item', itemId: it.id }));
+}
+
+/* ================ WS & Lobby ================ */
+ws.addEventListener('open', () => { ws.send(JSON.stringify({ type:'list_lobbies' })); });
+ws.addEventListener('message', ev => {
+  const msg = JSON.parse(ev.data);
+  if(msg.type === 'lobbies'){
+    const sel = document.getElementById('lobbies');
+    sel.innerHTML = '';
+    msg.lobbies.forEach(l => {
+      const opt = document.createElement('option'); opt.value = l.id;
+      opt.textContent = `${l.id} (${l.players.join(',')})`; sel.appendChild(opt);
     });
+  } else if(msg.type === 'lobby_created'){
+    addLog('Lobby created: ' + msg.lobbyId);
+    ws.send(JSON.stringify({ type:'list_lobbies' }));
+  } else if(msg.type === 'lobby_update'){
+    addLog('Lobby updated: ' + msg.lobbyId + ' players: ' + msg.players.join(','));
+  } else if(msg.type === 'match_start'){
+    addLog('Match starting!');
+    myPlayerIndex = msg.playerIndex;
+    currentState = msg.state;
+    subTurn = 1;
+    showMatch(msg.state);
+  } else if(msg.type === 'state'){
+    currentState = msg.state;
+    showMatch(msg.state);
+  } else if(msg.type === 'error'){
+    addLog('Server error: ' + msg.msg);
+  }
+});
 
-    ws.addEventListener('message', ev => {
-      const msg = JSON.parse(ev.data);
-      if(msg.type === 'lobbies'){
-        lobbiesSelect.innerHTML = '';
-        msg.lobbies.forEach(l => {
-          const opt = document.createElement('option');
-          opt.value = l.id; opt.textContent = `${l.id} (${l.players.join(',')})`;
-          lobbiesSelect.appendChild(opt);
-        });
-      } else if(msg.type === 'lobby_created'){
-        addLog('Lobby created: ' + msg.lobbyId);
-        ws.send(JSON.stringify({type:'list_lobbies'}));
-      } else if(msg.type === 'lobby_update'){
-        addLog('Lobby updated: ' + msg.lobbyId + ' players: ' + msg.players.join(','));
-      } else if(msg.type === 'match_start'){
-        addLog('Match starting!');
-        myPlayerIndex = msg.playerIndex;
-        currentState = msg.state;
-        showMatch(msg.state);
-      } else if(msg.type === 'state'){
-        currentState = msg.state;
-        showMatch(msg.state);
-      } else if(msg.type === 'error'){
-        addLog('Error: ' + msg.msg);
+/* Lobby buttons */
+document.getElementById('create').onclick = () => {
+  ws.send(JSON.stringify({ type:'create_lobby', name: document.getElementById('name').value }));
+};
+document.getElementById('join').onclick = () => {
+  const id = document.getElementById('lobbies').value;
+  if(!id) { addLog('Choose a lobby'); return; }
+  ws.send(JSON.stringify({ type:'join_lobby', lobbyId: id, name: document.getElementById('name').value }));
+};
+document.getElementById('refresh').onclick = () => ws.send(JSON.stringify({ type:'list_lobbies' }));
+
+/* ================ GRID & MATCH UI ================ */
+function showMatch(state){
+  document.getElementById('matchArea').style.display = 'block';
+  document.getElementById('matchId').textContent = state.id;
+  document.getElementById('youName').textContent = state.players[myPlayerIndex].name || 'You';
+  document.getElementById('turnInfo').textContent = state.players[state.turn].name;
+  document.getElementById('subTurnInfo').textContent = subTurn;
+
+  const gridEl = document.getElementById('grid');
+  gridEl.innerHTML = '';
+  for(let y=0;y<GRID_H;y++){
+    for(let x=0;x<GRID_W;x++){
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.x = x; cell.dataset.y = y;
+      const unit = state.units.find(u => u.x===x && u.y===y && u.hp>0);
+      if(unit){
+        const ownerIndex = state.players.findIndex(p=>p.id===unit.owner);
+        const udiv = document.createElement('div');
+        udiv.className = 'unit';
+        udiv.textContent = unit.hp;
+        udiv.title = `${state.players[ownerIndex].name} unit (hp ${unit.hp}) id:${unit.id}`;
+        if(ownerIndex === myPlayerIndex) udiv.classList.add('you');
+        cell.appendChild(udiv);
       }
-    });
-
-    createBtn.onclick = () => {
-      ws.send(JSON.stringify({ type:'create_lobby', name: nameInput.value }));
-    };
-    joinBtn.onclick = () => {
-      const id = lobbiesSelect.value;
-      if(!id){ addLog('Pick a lobby'); return; }
-      ws.send(JSON.stringify({ type:'join_lobby', lobbyId: id, name: nameInput.value }));
-    };
-    refreshBtn.onclick = () => ws.send(JSON.stringify({type:'list_lobbies'}));
-
-    function showMatch(state){
-      matchArea.style.display = 'block';
-      matchIdSpan.textContent = state.id;
-      youNameSpan.textContent = state.players[myPlayerIndex].name || 'You';
-      turnInfo.textContent = `Turn: ${state.players[state.turn].name}`;
-      // draw grid
-      gridEl.innerHTML = '';
-      const W = state.width, H = state.height;
-      for(let y=0;y<H;y++){
-        for(let x=0;x<W;x++){
-          const cell = document.createElement('div');
-          cell.className = 'cell';
-          cell.dataset.x = x; cell.dataset.y = y;
-          const unit = state.units.find(u => u.x===x && u.y===y && u.hp>0);
-          if(unit){
-            const udiv = document.createElement('div');
-            udiv.className = 'unit';
-            udiv.textContent = unit.hp;
-            // style by owner index
-            const ownerIndex = state.players.findIndex(p=>p.id===unit.owner);
-            udiv.style.background = ownerIndex===0 ? '#e0f7ff' : '#ffe0e0';
-            if(ownerIndex === myPlayerIndex) udiv.classList.add('you');
-            cell.appendChild(udiv);
-            cell.title = `${state.players[ownerIndex].name} unit (hp ${unit.hp}) id:${unit.id}`;
-          }
-          cell.onclick = onCellClick;
-          gridEl.appendChild(cell);
-        }
-      }
+      cell.onclick = onCellClick;
+      gridEl.appendChild(cell);
     }
+  }
+  addLog('State updated');
+}
 
-    function onCellClick(e){
-      const x = parseInt(e.currentTarget.dataset.x);
-      const y = parseInt(e.currentTarget.dataset.y);
-      if(!currentState) return;
-      // select unit under you when clicking your unit
-      const unit = currentState.units.find(u=>u.x===x && u.y===y && u.hp>0);
-      if(unit && currentState.players.findIndex(p=>p.id===unit.owner) === myPlayerIndex){
-        selectedUnitId = unit.id;
-        addLog('Selected your unit (hp '+unit.hp+')');
-        return;
-      }
-      // if an action is chosen
-      if(selectedUnitId && currentAction){
-        sendAction({ act: currentAction, unitId: selectedUnitId, to: { x, y } });
-        // clear selection and action
-        currentAction = null;
-        selectedUnitId = null;
-      }
-    }
+function onCellClick(e){
+  const x = parseInt(e.currentTarget.dataset.x);
+  const y = parseInt(e.currentTarget.dataset.y);
+  if(!currentState) return;
 
-    function sendAction(action){
-      ws.send(JSON.stringify({ type:'action', matchId: currentState.id, action }));
-    }
+  // If user chose Deploy
+  if(selectedShopItem && selectedShopItem.type === 'troop' && document.getElementById('deployBtn').dataset.awaiting === 'true'){
+    // Check tile on player's side and empty
+    const properSide = isTileOnYourSide(y);
+    const occupied = currentState.units.some(u=>u.x===x && u.y===y && u.hp>0);
+    if(!properSide){ addLog('You can only deploy on your side rows.'); return; }
+    if(occupied){ addLog('Tile occupied'); return; }
 
-    document.getElementById('moveBtn').onclick = () => { currentAction = 'move'; addLog('Click a destination to move selected unit'); };
-    document.getElementById('attackBtn').onclick = () => { currentAction = 'attack'; addLog('Click a tile with an enemy unit to attack'); };
-    document.getElementById('endBtn').onclick = () => { sendAction({ act:'end' }); };
+    // Send a deploy request to server (server must implement); locally show a temporary message
+    addLog(`Deploy request: ${selectedShopItem.data.name} to (${x},${y}) — waiting server acceptance`);
+    ws.send(JSON.stringify({ type:'deploy_request', matchId: currentState.id, troopId: selectedShopItem.data.id, to:{x,y} }));
+    // Clear selection
+    selectedShopItem = null;
+    document.getElementById('deployBtn').dataset.awaiting = 'false';
+    return;
+  }
+
+  // If Use Item mode active
+  if(selectedShopItem && selectedShopItem.type === 'item' && document.getElementById('useItemBtn').dataset.awaiting === 'true'){
+    const it = selectedShopItem.data;
+    addLog(`Item use request: ${it.name} on (${x},${y})`);
+    ws.send(JSON.stringify({ type:'use_item_request', matchId: currentState.id, itemId: it.id, to: {x,y} }));
+    selectedShopItem = null;
+    document.getElementById('useItemBtn').dataset.awaiting = 'false';
+    return;
+  }
+
+  // Selecting or issuing move/attack
+  const unit = currentState.units.find(u=>u.x===x && u.y===y && u.hp>0);
+  if(unit && currentState.players.findIndex(p=>p.id===unit.owner) === myPlayerIndex){
+    selectedUnitId = unit.id;
+    addLog('Selected your unit (hp '+unit.hp+')');
+    return;
+  }
+
+  if(selectedUnitId && currentAction){
+    // send move/attack action to server
+    const action = { act: currentAction, unitId: selectedUnitId, to: { x, y } };
+    ws.send(JSON.stringify({ type:'action', matchId: currentState.id, action }));
+    addLog('Sent ' + currentAction + ' action');
+    // clear selection after sending
+    selectedUnitId = null;
+    currentAction = null;
+  }
+}
+
+function isTileOnYourSide(y){
+  // playerIndex 0 is bottom rows (y >= 3), playerIndex 1 is top rows (y <= 2)
+  if(myPlayerIndex === 0) return y >= Math.ceil(GRID_H/2);
+  return y < Math.ceil(GRID_H/2);
+}
+
+/* ================ Controls ================ */
+document.getElementById('moveBtn').onclick = () => { currentAction = 'move'; addLog('Click a destination to move the selected unit'); };
+document.getElementById('attackBtn').onclick = () => { currentAction = 'attack'; addLog('Click a tile with enemy to attack'); };
+document.getElementById('endBtn').onclick = () => {
+  // Implement sub-turn rule:
+  if(subTurn === 1){
+    subTurn = 2;
+    document.getElementById('subTurnInfo').textContent = subTurn;
+    addLog('Sub-Turn 1 ended — Sub-Turn 2 for same player.');
+    // inform server that we ended a sub-turn — for server tracking you can send a special action
+    ws.send(JSON.stringify({ type:'subturn_end', matchId: currentState.id, playerIndex: myPlayerIndex, subTurn: 1 }));
+  } else {
+    // subTurn === 2 => pass turn to other player
+    subTurn = 1;
+    document.getElementById('subTurnInfo').textContent = subTurn;
+    addLog('Sub-Turn 2 ended — passing turn to opponent.');
+    ws.send(JSON.stringify({ type:'action', matchId: currentState.id, action: { act: 'end' } }));
+  }
+};
+
+/* Deploy and item buttons */
+document.getElementById('deployBtn').onclick = () => {
+  if(!selectedShopItem || selectedShopItem.type !== 'troop'){ addLog('Select a troop from shop first (Buy).'); return; }
+  document.getElementById('deployBtn').dataset.awaiting = 'true';
+  addLog('Click on your side grid tile to deploy the purchased troop.');
+};
+document.getElementById('useItemBtn').onclick = () => {
+  if(!selectedShopItem || selectedShopItem.type !== 'item'){ addLog('Select an item from shop first (Buy).'); return; }
+  document.getElementById('useItemBtn').dataset.awaiting = 'true';
+  addLog('Click on target tile to use the item.');
+};
+
+/* ================ Misc ================ */
+addLog('Frontend loaded — ready.');
+
+/* Note: The client sends purchase_request, deploy_request, and use_item_request messages.
+   Your Replit server must implement handlers for these message types to:
+     - deduct/award coins server-side,
+     - create units in the match state (server-authoritative),
+     - apply item effects server-authoritative,
+     - award coins for participation/winning when match ends.
+*/
 
   </script>
 </body>
