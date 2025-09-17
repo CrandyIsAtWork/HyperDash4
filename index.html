@@ -1,335 +1,145 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8">
   <title>Hyper Dash 4</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="site-header">
-    <div class="logo-wrap">
-      <img src="./images/logo.png" alt="Hyper Dash 4 logo" class="logo" />
-      <h1>Hyper Dash 4</h1>
-    </div>
-    <div class="meta">
-      <div>Player: <input id="name" value="Player" /></div>
-      <div>Coins: <span id="coins">0</span></div>
-    </div>
-  </header>
+  <div id="header">
+    <img src="images/logo.png" alt="Hyper Dash 4" id="logo">
+    <h1>Hyper Dash 4</h1>
+  </div>
 
-  <main class="container">
-    <section class="lobby">
-      <div>
-        <button id="create">Create Lobby</button>
-        <select id="lobbies"></select>
-        <button id="join">Join Lobby</button>
-        <button id="refresh">Refresh Lobbies</button>
-      </div>
-    </section>
+  <div id="shop">
+    <h2>Shop</h2>
+    <p>Coins: <span id="coins">0</span></p>
+    <div id="troops"></div>
+    <div id="items"></div>
+  </div>
 
-    <section id="matchArea" class="match" style="display:none;">
-      <div class="match-top">
-        <div>Match: <span id="matchId"></span></div>
-        <div>You: <span id="youName"></span></div>
-        <div>Turn: <span id="turnInfo"></span></div>
-        <div>Sub-Turn: <span id="subTurnInfo">1</span></div>
-      </div>
+  <div id="lobby">
+    <h2>Lobbies</h2>
+    <button onclick="createLobby()">Create Lobby</button>
+    <button onclick="listLobbies()">Refresh Lobbies</button>
+    <div id="lobbies"></div>
+  </div>
 
-      <div class="game-grid-shop">
-        <div class="grid-wrap">
-          <div id="grid" class="grid"></div>
-        </div>
-
-        <aside class="shop">
-          <h2>Shop</h2>
-          <div id="troopsList" class="shop-section">
-            <!-- populated by JS -->
-          </div>
-
-          <h3>Items</h3>
-          <div id="itemsList" class="shop-section">
-            <!-- populated by JS -->
-          </div>
-
-          <div class="shop-actions">
-            <button id="deployBtn" title="Deploy selected purchased unit">Deploy Selected</button>
-            <button id="useItemBtn" title="Use selected item on tile">Use Item</button>
-          </div>
-        </aside>
-      </div>
-
-      <div class="controls">
-        <button id="moveBtn">Move</button>
-        <button id="attackBtn">Attack</button>
-        <button id="endBtn">End Turn</button>
-      </div>
-
-      <div id="log" class="log"></div>
-    </section>
-  </main>
+  <div id="game">
+    <h2>Game</h2>
+    <p id="turn"></p>
+    <button onclick="endTurn()">End Turn</button>
+    <div id="log"></div>
+  </div>
 
   <script>
-/* ================= CONFIG ================= */
-const WS_URL = "wss://fb306d46-d95a-496b-9881-5bd953daeb1e-00-3on3fdjrlb0.riker.replit.dev"; // <-- replace if needed
-const GRID_W = 6, GRID_H = 6;
+  const ws = new WebSocket("wss://YOUR-REPL-URL-HERE"); // replace with your Replit URL
 
-/* ================ STATE ================ */
-const ws = new WebSocket(WS_URL);
-let myPlayerIndex = null;
-let currentState = null;
-let selectedUnitId = null;
-let selectedShopItem = null;   // {type:'troop'|'item', id}
-let currentAction = null; // "move" or "attack"
-let subTurn = 1; // 1 or 2
-let coins = 5; // starting coins locally
-const logEl = document.getElementById('log');
+  let coins = 20;
+  let loadout = { troops: [], items: [] };
 
-/* ================ TROOPS & ITEMS ================ */
-const TROOPS = [
-  { id: 'bruiser', name: 'Bruiser', cost: 3, hp: 14, move:2, range:1, damage:4, desc: 'Tanky melee. Pros: survives hits. Cons: slow.' },
-  { id: 'striker', name: 'Striker', cost: 4, hp: 8, move:3, range:1, damage:5, desc: 'High damage, fragile.' },
-  { id: 'ranger', name: 'Ranger', cost: 4, hp: 7, move:2, range:2, damage:3, desc: 'Ranged attacker with 2-tile range.' },
-];
+  const TROOPS = [
+    { id: "soldier", name: "Soldier", cost: 5 },
+    { id: "tank", name: "Tank", cost: 15 },
+    { id: "archer", name: "Archer", cost: 7 },
+  ];
 
-const ITEMS = [
-  { id: 'medkit', name: 'Medkit', cost: 2, desc: 'Heals 5 HP to one unit on use', effect: { kind: 'heal', amount: 5 } },
-  { id: 'bomb', name: 'Bomb', cost: 3, desc: 'Deals 4 damage to a tile (AOE 0)', effect: { kind: 'damage', amount: 4 } },
-];
+  const ITEMS = [
+    { id: "potion", name: "Potion", cost: 5 },
+    { id: "bomb", name: "Bomb", cost: 8 },
+  ];
 
-/* ================ UI Helpers ================ */
-function addLog(txt){ const d = document.createElement('div'); d.textContent = `${new Date().toLocaleTimeString()} — ${txt}`; logEl.prepend(d); }
-function setCoins(n){ coins = n; document.getElementById('coins').textContent = coins; }
-setCoins(coins);
+  function addLog(msg) {
+    document.getElementById("log").innerHTML += `<div>${msg}</div>`;
+  }
 
-/* ================ SHOP UI ================ */
-function renderShop(){
-  const troopsArea = document.getElementById('troopsList');
-  troopsArea.innerHTML = '';
-  TROOPS.forEach(t => {
-    const node = document.createElement('div');
-    node.className = 'shop-item';
-    node.innerHTML = `<strong>${t.name}</strong> — ${t.cost} ⨯<div class="small">${t.desc}</div>`;
-    const btn = document.createElement('button');
-    btn.textContent = 'Buy';
-    btn.onclick = () => buyTroop(t);
-    node.appendChild(btn);
-    troopsArea.appendChild(node);
-  });
+  function updateCoins() {
+    document.getElementById("coins").textContent = coins;
+  }
 
-  const itemsArea = document.getElementById('itemsList');
-  itemsArea.innerHTML = '';
-  ITEMS.forEach(it => {
-    const node = document.createElement('div');
-    node.className = 'shop-item';
-    node.innerHTML = `<strong>${it.name}</strong> — ${it.cost} ⨯<div class="small">${it.desc}</div>`;
-    const btn = document.createElement('button');
-    btn.textContent = 'Buy';
-    btn.onclick = () => buyItem(it);
-    node.appendChild(btn);
-    itemsArea.appendChild(node);
-  });
-}
-renderShop();
-
-function buyTroop(t){
-  if(coins < t.cost){ addLog('Not enough coins'); return; }
-  // For now we handle purchases locally; send request to server to persist.
-  setCoins(coins - t.cost);
-  addLog(`Bought ${t.name}. Click Deploy Selected to place it on your side.`);
-  selectedShopItem = { type: 'troop', data: t };
-  // send purchase request to server (server must implement to persist)
-  ws.send(JSON.stringify({ type: 'purchase_request', itemType: 'troop', itemId: t.id }));
-}
-
-function buyItem(it){
-  if(coins < it.cost){ addLog('Not enough coins'); return; }
-  setCoins(coins - it.cost);
-  addLog(`Bought item ${it.name}. Select Use Item and click a tile to use.`);
-  selectedShopItem = { type: 'item', data: it };
-  ws.send(JSON.stringify({ type: 'purchase_request', itemType: 'item', itemId: it.id }));
-}
-
-/* ================ WS & Lobby ================ */
-ws.addEventListener('open', () => { ws.send(JSON.stringify({ type:'list_lobbies' })); });
-ws.addEventListener('message', ev => {
-  const msg = JSON.parse(ev.data);
-  if(msg.type === 'lobbies'){
-    const sel = document.getElementById('lobbies');
-    sel.innerHTML = '';
-    msg.lobbies.forEach(l => {
-      const opt = document.createElement('option'); opt.value = l.id;
-      opt.textContent = `${l.id} (${l.players.join(',')})`; sel.appendChild(opt);
+  function renderShop() {
+    const troopDiv = document.getElementById("troops");
+    troopDiv.innerHTML = "<h3>Troops</h3>";
+    TROOPS.forEach(t => {
+      troopDiv.innerHTML += `<button onclick="buyTroop('${t.id}')">${t.name} (${t.cost})</button>`;
     });
-  } else if(msg.type === 'lobby_created'){
-  addLog('Lobby created: ' + msg.lobbyId);
-  ws.send(JSON.stringify({ type:'list_lobbies' }));
 
-  // send chosen troops/items
-  ws.send(JSON.stringify({
-    type: 'setLoadout',
-    lobbyId: msg.lobbyId,
-    troops: TROOPS.filter(t => t.purchased).map(t => t.id),
-    items: ITEMS.filter(i => i.purchased).map(i => i.id)
-  }));
-}
-  } else if(msg.type === 'match_start'){
-    addLog('Match starting!');
-    myPlayerIndex = msg.playerIndex;
-    currentState = msg.state;
-    subTurn = 1;
-    showMatch(msg.state);
-  } else if(msg.type === 'state'){
-    currentState = msg.state;
-    showMatch(msg.state);
-  } else if(msg.type === 'error'){
-    addLog('Server error: ' + msg.msg);
+    const itemDiv = document.getElementById("items");
+    itemDiv.innerHTML = "<h3>Items</h3>";
+    ITEMS.forEach(i => {
+      itemDiv.innerHTML += `<button onclick="buyItem('${i.id}')">${i.name} (${i.cost})</button>`;
+    });
   }
-});
 
-/* Lobby buttons */
-document.getElementById('create').onclick = () => {
-  ws.send(JSON.stringify({ type:'create_lobby', name: document.getElementById('name').value }));
-};
-document.getElementById('join').onclick = () => {
-  const id = document.getElementById('lobbies').value;
-  if(!id) { addLog('Choose a lobby'); return; }
-  ws.send(JSON.stringify({ type:'join_lobby', lobbyId: id, name: document.getElementById('name').value }));
-};
-document.getElementById('refresh').onclick = () => ws.send(JSON.stringify({ type:'list_lobbies' }));
+  function buyTroop(id) {
+    const t = TROOPS.find(x => x.id === id);
+    if (coins >= t.cost) {
+      coins -= t.cost;
+      loadout.troops.push(t.id);
+      updateCoins();
+      addLog("Bought " + t.name);
+      ws.send(JSON.stringify({ type: "purchase_request", itemType: "troop", itemId: t.id }));
+    } else addLog("Not enough coins!");
+  }
 
-/* ================ GRID & MATCH UI ================ */
-function showMatch(state){
-  document.getElementById('matchArea').style.display = 'block';
-  document.getElementById('matchId').textContent = state.id;
-  document.getElementById('youName').textContent = state.players[myPlayerIndex].name || 'You';
-  document.getElementById('turnInfo').textContent = state.players[state.turn].name;
-  document.getElementById('subTurnInfo').textContent = subTurn;
+  function buyItem(id) {
+    const it = ITEMS.find(x => x.id === id);
+    if (coins >= it.cost) {
+      coins -= it.cost;
+      loadout.items.push(it.id);
+      updateCoins();
+      addLog("Bought " + it.name);
+      ws.send(JSON.stringify({ type: "purchase_request", itemType: "item", itemId: it.id }));
+    } else addLog("Not enough coins!");
+  }
 
-  const gridEl = document.getElementById('grid');
-  gridEl.innerHTML = '';
-  for(let y=0;y<GRID_H;y++){
-    for(let x=0;x<GRID_W;x++){
-      const cell = document.createElement('div');
-      cell.className = 'cell';
-      cell.dataset.x = x; cell.dataset.y = y;
-      const unit = state.units.find(u => u.x===x && u.y===y && u.hp>0);
-      if(unit){
-        const ownerIndex = state.players.findIndex(p=>p.id===unit.owner);
-        const udiv = document.createElement('div');
-        udiv.className = 'unit';
-        udiv.textContent = unit.hp;
-        udiv.title = `${state.players[ownerIndex].name} unit (hp ${unit.hp}) id:${unit.id}`;
-        if(ownerIndex === myPlayerIndex) udiv.classList.add('you');
-        cell.appendChild(udiv);
-      }
-      cell.onclick = onCellClick;
-      gridEl.appendChild(cell);
+  function createLobby() {
+    ws.send(JSON.stringify({ type: "create_lobby" }));
+  }
+
+  function listLobbies() {
+    ws.send(JSON.stringify({ type: "list_lobbies" }));
+  }
+
+  function joinLobby(id) {
+    ws.send(JSON.stringify({ type: "join_lobby", lobbyId: id }));
+  }
+
+  function endTurn() {
+    ws.send(JSON.stringify({ type: "end_turn" }));
+  }
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "welcome") {
+      coins = msg.coins;
+      updateCoins();
+      renderShop();
+      addLog("Connected as " + msg.playerId);
+    } else if (msg.type === "lobby_created" || msg.type === "lobby_joined") {
+      addLog("In lobby " + msg.lobbyId);
+      ws.send(JSON.stringify({
+        type: "setLoadout",
+        lobbyId: msg.lobbyId,
+        troops: loadout.troops,
+        items: loadout.items
+      }));
+    } else if (msg.type === "lobby_update") {
+      document.getElementById("lobbies").innerHTML =
+        `Players: ${msg.players.join(", ")}`;
+    } else if (msg.type === "list_lobbies") {
+      document.getElementById("lobbies").innerHTML =
+        msg.lobbies.map(l => `<button onclick="joinLobby('${l.id}')">Join Lobby ${l.id} (${l.players} players)</button>`).join("<br>");
+    } else if (msg.type === "state") {
+      document.getElementById("turn").textContent = "Turn: " + msg.turn;
+    } else if (msg.type === "purchase_success") {
+      coins = msg.coins;
+      updateCoins();
     }
-  }
-  addLog('State updated');
-}
-
-function onCellClick(e){
-  const x = parseInt(e.currentTarget.dataset.x);
-  const y = parseInt(e.currentTarget.dataset.y);
-  if(!currentState) return;
-
-  // If user chose Deploy
-  if(selectedShopItem && selectedShopItem.type === 'troop' && document.getElementById('deployBtn').dataset.awaiting === 'true'){
-    // Check tile on player's side and empty
-    const properSide = isTileOnYourSide(y);
-    const occupied = currentState.units.some(u=>u.x===x && u.y===y && u.hp>0);
-    if(!properSide){ addLog('You can only deploy on your side rows.'); return; }
-    if(occupied){ addLog('Tile occupied'); return; }
-
-    // Send a deploy request to server (server must implement); locally show a temporary message
-    addLog(`Deploy request: ${selectedShopItem.data.name} to (${x},${y}) — waiting server acceptance`);
-    ws.send(JSON.stringify({ type:'deploy_request', matchId: currentState.id, troopId: selectedShopItem.data.id, to:{x,y} }));
-    // Clear selection
-    selectedShopItem = null;
-    document.getElementById('deployBtn').dataset.awaiting = 'false';
-    return;
-  }
-
-  // If Use Item mode active
-  if(selectedShopItem && selectedShopItem.type === 'item' && document.getElementById('useItemBtn').dataset.awaiting === 'true'){
-    const it = selectedShopItem.data;
-    addLog(`Item use request: ${it.name} on (${x},${y})`);
-    ws.send(JSON.stringify({ type:'use_item_request', matchId: currentState.id, itemId: it.id, to: {x,y} }));
-    selectedShopItem = null;
-    document.getElementById('useItemBtn').dataset.awaiting = 'false';
-    return;
-  }
-
-  // Selecting or issuing move/attack
-  const unit = currentState.units.find(u=>u.x===x && u.y===y && u.hp>0);
-  if(unit && currentState.players.findIndex(p=>p.id===unit.owner) === myPlayerIndex){
-    selectedUnitId = unit.id;
-    addLog('Selected your unit (hp '+unit.hp+')');
-    return;
-  }
-
-  if(selectedUnitId && currentAction){
-    // send move/attack action to server
-    const action = { act: currentAction, unitId: selectedUnitId, to: { x, y } };
-    ws.send(JSON.stringify({ type:'action', matchId: currentState.id, action }));
-    addLog('Sent ' + currentAction + ' action');
-    // clear selection after sending
-    selectedUnitId = null;
-    currentAction = null;
-  }
-}
-
-function isTileOnYourSide(y){
-  // playerIndex 0 is bottom rows (y >= 3), playerIndex 1 is top rows (y <= 2)
-  if(myPlayerIndex === 0) return y >= Math.ceil(GRID_H/2);
-  return y < Math.ceil(GRID_H/2);
-}
-
-/* ================ Controls ================ */
-document.getElementById('moveBtn').onclick = () => { currentAction = 'move'; addLog('Click a destination to move the selected unit'); };
-document.getElementById('attackBtn').onclick = () => { currentAction = 'attack'; addLog('Click a tile with enemy to attack'); };
-document.getElementById('endBtn').onclick = () => {
-  // Implement sub-turn rule:
-  if(subTurn === 1){
-    subTurn = 2;
-    document.getElementById('subTurnInfo').textContent = subTurn;
-    addLog('Sub-Turn 1 ended — Sub-Turn 2 for same player.');
-    // inform server that we ended a sub-turn — for server tracking you can send a special action
-    ws.send(JSON.stringify({ type:'subturn_end', matchId: currentState.id, playerIndex: myPlayerIndex, subTurn: 1 }));
-  } else {
-    // subTurn === 2 => pass turn to other player
-    subTurn = 1;
-    document.getElementById('subTurnInfo').textContent = subTurn;
-    addLog('Sub-Turn 2 ended — passing turn to opponent.');
-    ws.send(JSON.stringify({ type:'action', matchId: currentState.id, action: { act: 'end' } }));
-  }
-};
-
-/* Deploy and item buttons */
-document.getElementById('deployBtn').onclick = () => {
-  if(!selectedShopItem || selectedShopItem.type !== 'troop'){ addLog('Select a troop from shop first (Buy).'); return; }
-  document.getElementById('deployBtn').dataset.awaiting = 'true';
-  addLog('Click on your side grid tile to deploy the purchased troop.');
-};
-document.getElementById('useItemBtn').onclick = () => {
-  if(!selectedShopItem || selectedShopItem.type !== 'item'){ addLog('Select an item from shop first (Buy).'); return; }
-  document.getElementById('useItemBtn').dataset.awaiting = 'true';
-  addLog('Click on target tile to use the item.');
-};
-
-/* ================ Misc ================ */
-addLog('Frontend loaded — ready.');
-
-/* Note: The client sends purchase_request, deploy_request, and use_item_request messages.
-   Your Replit server must implement handlers for these message types to:
-     - deduct/award coins server-side,
-     - create units in the match state (server-authoritative),
-     - apply item effects server-authoritative,
-     - award coins for participation/winning when match ends.
-*/
-
+  };
   </script>
+</body>
+</html>
+
 </body>
 </html>
