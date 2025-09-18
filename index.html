@@ -50,10 +50,10 @@
     <section id="lobbyPhase" class="hidden">
       <h2>Lobby</h2>
       <div class="row">
-        <button id="create">Create Lobby</button>
-        <select id="lobbies"><option value="">-- select lobby --</option></select>
-        <button id="join">Join Lobby</button>
-        <button id="refresh">Refresh Lobbies</button>
+        <button id="create" disabled>Create Lobby</button>
+<select id="lobbies" disabled><option value="">-- select lobby --</option></select>
+<button id="join" disabled>Join Lobby</button>
+<button id="refresh" disabled>Refresh Lobbies</button>
       </div>
       <div style="margin-top:8px">Lobby ID: <span id="currentLobby">—</span></div>
     </section>
@@ -312,11 +312,18 @@ ws.addEventListener('message', (ev) => {
   try { msg = JSON.parse(ev.data); } catch { return; }
 
   if (msg.type === 'welcome') {
-    myPlayerId = msg.playerId;
-    if (msg.coins != null) setCoins(msg.coins);
-    log('Welcome (server playerId): ' + myPlayerId);
-    return;
-  }
+  myPlayerId = msg.playerId;
+  if (msg.coins != null) setCoins(msg.coins);
+  log('Welcome (server playerId): ' + myPlayerId);
+
+  // Enable lobby buttons now that we have myPlayerId
+  createBtn.disabled = false;
+  joinBtn.disabled = false;
+  refreshBtn.disabled = false;
+  lobbiesSel.disabled = false;
+
+  return;
+}
 
   if (msg.type === 'lobbies') {
     lobbiesSel.innerHTML = '<option value="">-- select lobby --</option>';
